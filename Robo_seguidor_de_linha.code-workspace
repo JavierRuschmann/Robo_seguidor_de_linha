@@ -1,16 +1,8 @@
 {
-	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"name": "Lâmpada Enviar",
-			"path": "../Lâmpada Enviar"
-		},
-		{
-			"name": "Lâmpada Receber",
-			"path": "../Lâmpada Receber"
-		}
-	],
-	"settings": {}
+    "folders": [
+        {
+            "name": "Robo_seguidor_de_linha",
+            "path": "."
+        }
+    ]
 }
