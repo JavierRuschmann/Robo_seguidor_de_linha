@@ -46,7 +46,8 @@ float integral = 0;
 
 // --- ESP-NOW Configuration ---
 // Replace with the MAC Address of your receiver ESP32 board
-uint8_t receiverAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+// 8C:94:DF:68:00:CC
+uint8_t receiverAddress[] = {0x8C, 0x94, 0xDF, 0x68, 0x00, 0xCC};
 
 typedef struct struct_telemetry {
   uint16_t sensors[SENSOR_COUNT];
