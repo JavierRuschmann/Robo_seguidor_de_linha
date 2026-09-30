@@ -4,17 +4,13 @@
 #include <QTRSensors.h>
 
 #include "telemetry.h"
+#include "robot_config.h"
 
 #define LED_BUILTIN 2
 
-// --- Time Limit Safety ---
-const uint32_t RUN_TIME_LIMIT_MS = 10000; // 10-second safety cutoff
 uint32_t runStartTime = 0;
 uint32_t lastLoopTimeMs = 0;
 
-// --- Sensors (QTR-8A configured for 6 ADC1 pins) ---
-const uint8_t QTR_PINS[SENSOR_COUNT] = {36, 39, 34, 35, 32, 33};
-#define IR_EMITTER_PIN 4
 
 QTRSensors qtr;
 uint16_t sensorValues[SENSOR_COUNT];
@@ -31,16 +27,16 @@ uint16_t sensorValues[SENSOR_COUNT];
 #define STBY_PIN 5
 
 // Speed Settings
-const int BASE_SPEED = 180;
-const int MAX_SPEED = 255;
-const float MOTOR_RAMP_STEP_PER_SEC = 220.0f;
-const float PID_DT_FALLBACK_SECONDS = 0.016f;
-const float MAX_PID_INTEGRAL = 2000.0f;
+const int BASE_SPEED = RobotConfig::BASE_SPEED;
+const int MAX_SPEED = RobotConfig::MAX_SPEED;
+const float MOTOR_RAMP_STEP_PER_SEC = RobotConfig::MOTOR_RAMP_STEP_PER_SEC;
+const float PID_DT_FALLBACK_SECONDS = RobotConfig::PID_DT_FALLBACK_SECONDS;
+const float MAX_PID_INTEGRAL = RobotConfig::MAX_PID_INTEGRAL;
 
 // --- PID Tuning Parameters ---
-constexpr float Kp = 0.06f;
-constexpr float Ki = 0.0001f;
-constexpr float Kd = 0.6f;
+constexpr float Kp = RobotConfig::Kp;
+constexpr float Ki = RobotConfig::Ki;
+constexpr float Kd = RobotConfig::Kd;
 
 int lastError = 0;
 float integral = 0.0f;
@@ -48,8 +44,14 @@ int currentLeftSpeed = 0;
 int currentRightSpeed = 0;
 
 // --- ESP-NOW Configuration ---
-// Replace with your receiver ESP32 MAC address
-uint8_t receiverAddress[] = {0x8C, 0x94, 0xDF, 0x4C, 0x71, 0x90};
+uint8_t receiverAddress[] = {
+  RobotConfig::RECEIVER_ADDRESS[0],
+  RobotConfig::RECEIVER_ADDRESS[1],
+  RobotConfig::RECEIVER_ADDRESS[2],
+  RobotConfig::RECEIVER_ADDRESS[3],
+  RobotConfig::RECEIVER_ADDRESS[4],
+  RobotConfig::RECEIVER_ADDRESS[5]
+};
 
 TelemetryPacket telemetryData;
 
@@ -62,14 +64,14 @@ void sendTelemetry();
 int moveToward(int currentValue, int targetValue, float maxDelta);
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(RobotConfig::SERIAL_BAUD_RATE);
 
   initMotors();
 
   // Initialize QTR Sensors in ANALOG mode
   qtr.setTypeAnalog();
-  qtr.setSensorPins(QTR_PINS, SENSOR_COUNT);
-  qtr.setEmitterPin(IR_EMITTER_PIN);
+  qtr.setSensorPins(RobotConfig::QTR_PINS, SENSOR_COUNT);
+  qtr.setEmitterPin(RobotConfig::IR_EMITTER_PIN);
 
   // Initialize Wireless ESP-NOW
   initESPNow();
@@ -77,9 +79,9 @@ void setup() {
   // Calibration Phase (~3 seconds)
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-  for (uint16_t i = 0; i < 150; i++) {
+  for (uint16_t i = 0; i < RobotConfig::CALIBRATION_SAMPLES; i++) {
     qtr.calibrate();
-    delay(20);
+    delay(RobotConfig::CALIBRATION_DELAY_MS);
   }
   digitalWrite(LED_BUILTIN, LOW);
 
@@ -95,7 +97,7 @@ void loop() {
   uint32_t currentMillis = millis();
 
   // Safety cutoff
-  if (currentMillis - runStartTime >= RUN_TIME_LIMIT_MS) {
+  if (currentMillis - runStartTime >= RobotConfig::RUN_TIME_LIMIT_MS) {
     stopRobot();
     while (true) {
       delay(100);
@@ -117,18 +119,17 @@ void loop() {
     if (sensorValues[i] > maxSensorReading) {
       maxSensorReading = sensorValues[i];
     }
-    if (sensorValues[i] > 50) {
+    if (sensorValues[i] > RobotConfig::LINE_DETECTION_THRESHOLD) {
       lineDetected = true;
     }
   }
 
-  if (!lineDetected && maxSensorReading < 1500) {
+  if (!lineDetected && maxSensorReading < RobotConfig::LINE_LOSS_THRESHOLD) {
     integral *= 0.5f;
     lastError = error;
 
-    const int SEARCH_TURN_SPEED = 110;
-    int searchLeftTarget = (lastError >= 0) ? SEARCH_TURN_SPEED : -SEARCH_TURN_SPEED;
-    int searchRightTarget = (lastError >= 0) ? -SEARCH_TURN_SPEED : SEARCH_TURN_SPEED;
+    int searchLeftTarget = (lastError >= 0) ? RobotConfig::SEARCH_TURN_SPEED : -RobotConfig::SEARCH_TURN_SPEED;
+    int searchRightTarget = (lastError >= 0) ? -RobotConfig::SEARCH_TURN_SPEED : RobotConfig::SEARCH_TURN_SPEED;
 
     currentLeftSpeed = moveToward(currentLeftSpeed, searchLeftTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
     currentRightSpeed = moveToward(currentRightSpeed, searchRightTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
@@ -226,8 +227,8 @@ void stopRobot() {
   analogWrite(PWMA_PIN, 0);
   analogWrite(PWMB_PIN, 0);
 
-  pinMode(IR_EMITTER_PIN, OUTPUT);
-  digitalWrite(IR_EMITTER_PIN, LOW);
+  pinMode(RobotConfig::IR_EMITTER_PIN, OUTPUT);
+  digitalWrite(RobotConfig::IR_EMITTER_PIN, LOW);
 }
 
 void initESPNow() {
