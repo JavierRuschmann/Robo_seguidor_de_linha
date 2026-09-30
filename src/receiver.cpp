@@ -2,8 +2,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-// Must match the exact structure defined on the robot
-#define SENSOR_COUNT 8
+#define SENSOR_COUNT 6
 
 typedef struct struct_telemetry {
   uint16_t sensors[SENSOR_COUNT];
@@ -16,7 +15,6 @@ typedef struct struct_telemetry {
 
 struct_telemetry incomingData;
 
-// Callback function executed when ESP-NOW data is received
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingDataBytes, int len) {
 #else
@@ -24,44 +22,37 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingDataBytes, int len) {
 #endif
   memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
 
-  // --- SERIAL PLOTTER & MONITOR OUTPUT ---
-  // Format formatted for Arduino Serial Plotter (or Python logging)
-  Serial.print("Time:"); Serial.print(incomingData.timestamp);
-  Serial.print("\tPos:"); Serial.print(incomingData.position);
-  Serial.print("\tError:"); Serial.print(incomingData.error);
-  Serial.print("\tL_Speed:"); Serial.print(incomingData.leftMotorSpeed);
-  Serial.print("\tR_Speed:"); Serial.print(incomingData.rightMotorSpeed);
+  // --- TELEPLOT FORMATTING ---
+  Serial.print(">position:"); Serial.print(incomingData.position); Serial.print(" ");
+  Serial.print(">error:"); Serial.print(incomingData.error); Serial.print(" ");
+  Serial.print(">leftSpeed:"); Serial.print(incomingData.leftMotorSpeed); Serial.print(" ");
+  Serial.print(">rightSpeed:"); Serial.print(incomingData.rightMotorSpeed); Serial.print(" ");
 
-  // Print individual sensors
   for (int i = 0; i < SENSOR_COUNT; i++) {
-    Serial.print("\tS"); Serial.print(i + 1); Serial.print(":");
+    Serial.print(">S"); Serial.print(i + 1); Serial.print(":");
     Serial.print(incomingData.sensors[i]);
+    if (i < SENSOR_COUNT - 1) Serial.print(" ");
   }
-  Serial.println(); // End line
+  Serial.println();
 }
 
 void setup() {
   Serial.begin(115200);
 
-  // Set device as a Wi-Fi Station
   WiFi.mode(WIFI_STA);
-  
-  // Print Receiver MAC Address to ease robot pairing
-  Serial.println("\n=== RECEIVER ESP32 ONLINE ===");
-  Serial.print("Receiver MAC Address: ");
-  Serial.println(WiFi.macAddress());
-  Serial.println("==============================\n");
 
-  // Init ESP-NOW
+  Serial.println();
+  Serial.print("RECEIVER MAC ADDRESS: ");
+  Serial.println(WiFi.macAddress());
+  Serial.println();
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
 
-  // Register telemetry callback
   esp_now_register_recv_cb(OnDataRecv);
 }
 
 void loop() {
-  // Nothing needed here; receiving is handled asynchronously via callback
 }
