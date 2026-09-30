@@ -3,15 +3,17 @@
 #include <WiFi.h>
 #include <QTRSensors.h>
 
+#include "telemetry.h"
+
 #define LED_BUILTIN 2
 
 // --- Time Limit Safety ---
 const uint32_t RUN_TIME_LIMIT_MS = 10000; // 10-second safety cutoff
 uint32_t runStartTime = 0;
+uint32_t lastLoopTimeMs = 0;
 
 // --- Sensors (QTR-8A configured for 6 ADC1 pins) ---
-#define SENSOR_COUNT 6
-const uint8_t QTR_PINS[SENSOR_COUNT] = {36, 39, 34, 35, 32, 33}; 
+const uint8_t QTR_PINS[SENSOR_COUNT] = {36, 39, 34, 35, 32, 33};
 #define IR_EMITTER_PIN 4
 
 QTRSensors qtr;
@@ -30,30 +32,26 @@ uint16_t sensorValues[SENSOR_COUNT];
 
 // Speed Settings
 const int BASE_SPEED = 180;
-const int MAX_SPEED  = 255;
+const int MAX_SPEED = 255;
+const float MOTOR_RAMP_STEP_PER_SEC = 220.0f;
+const float PID_DT_FALLBACK_SECONDS = 0.016f;
+const float MAX_PID_INTEGRAL = 2000.0f;
 
 // --- PID Tuning Parameters ---
-float Kp = 0.06f;
-float Ki = 0.0001f;
-float Kd = 0.6f;
+constexpr float Kp = 0.06f;
+constexpr float Ki = 0.0001f;
+constexpr float Kd = 0.6f;
 
 int lastError = 0;
-float integral = 0;
+float integral = 0.0f;
+int currentLeftSpeed = 0;
+int currentRightSpeed = 0;
 
 // --- ESP-NOW Configuration ---
 // Replace with your receiver ESP32 MAC address
 uint8_t receiverAddress[] = {0x8C, 0x94, 0xDF, 0x4C, 0x71, 0x90};
 
-typedef struct struct_telemetry {
-  uint16_t sensors[SENSOR_COUNT];
-  uint16_t position;
-  int16_t error;
-  int16_t leftMotorSpeed;
-  int16_t rightMotorSpeed;
-  uint32_t timestamp;
-} struct_telemetry;
-
-struct_telemetry telemetryData;
+TelemetryPacket telemetryData;
 
 // Function Declarations
 void initMotors();
@@ -61,6 +59,7 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed);
 void stopRobot();
 void initESPNow();
 void sendTelemetry();
+int moveToward(int currentValue, int targetValue, float maxDelta);
 
 void setup() {
   Serial.begin(115200);
@@ -84,10 +83,12 @@ void setup() {
   }
   digitalWrite(LED_BUILTIN, LOW);
 
-  // Enable Motor Driver
   digitalWrite(STBY_PIN, HIGH);
-
   runStartTime = millis();
+  lastLoopTimeMs = runStartTime;
+
+  telemetryData.version = TELEMETRY_VERSION;
+  telemetryData.packetLength = sizeof(TelemetryPacket);
 }
 
 void loop() {
@@ -101,32 +102,64 @@ void loop() {
     }
   }
 
-  // Position ranges from 0 to 5000 for 6 sensors; 2500 is center
+  float dtSeconds = (currentMillis - lastLoopTimeMs) / 1000.0f;
+  if (dtSeconds <= 0.0f || dtSeconds > 0.2f) {
+    dtSeconds = PID_DT_FALLBACK_SECONDS;
+  }
+  lastLoopTimeMs = currentMillis;
+
   uint16_t position = qtr.readLineBlack(sensorValues);
-  int error = position - 2500;
+  int error = static_cast<int>(position) - 2500;
 
-  // PID Calculations
-  integral += error;
-  integral = constrain(integral, -2000, 2000);
+  bool lineDetected = false;
+  uint16_t maxSensorReading = 0;
+  for (int i = 0; i < SENSOR_COUNT; i++) {
+    if (sensorValues[i] > maxSensorReading) {
+      maxSensorReading = sensorValues[i];
+    }
+    if (sensorValues[i] > 50) {
+      lineDetected = true;
+    }
+  }
 
-  int derivative = error - lastError;
-  lastError = error;
+  if (!lineDetected && maxSensorReading < 1500) {
+    integral *= 0.5f;
+    lastError = error;
 
-  float adjustment = (Kp * error) + (Ki * integral) + (Kd * derivative);
+    const int SEARCH_TURN_SPEED = 110;
+    int searchLeftTarget = (lastError >= 0) ? SEARCH_TURN_SPEED : -SEARCH_TURN_SPEED;
+    int searchRightTarget = (lastError >= 0) ? -SEARCH_TURN_SPEED : SEARCH_TURN_SPEED;
 
-  int leftSpeed  = BASE_SPEED + adjustment;
-  int rightSpeed = BASE_SPEED - adjustment;
+    currentLeftSpeed = moveToward(currentLeftSpeed, searchLeftTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
+    currentRightSpeed = moveToward(currentRightSpeed, searchRightTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
+    setMotorSpeeds(currentLeftSpeed, currentRightSpeed);
+  } else {
+    integral += error * dtSeconds;
+    integral = constrain(integral, -MAX_PID_INTEGRAL, MAX_PID_INTEGRAL);
 
-  leftSpeed  = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
-  rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
+    float derivative = (error - lastError) / dtSeconds;
+    lastError = error;
 
-  setMotorSpeeds(leftSpeed, rightSpeed);
+    float adjustment = (Kp * error) + (Ki * integral) + (Kd * derivative);
 
-  // Send Telemetry via ESP-NOW
+    int leftTarget = BASE_SPEED + static_cast<int>(adjustment);
+    int rightTarget = BASE_SPEED - static_cast<int>(adjustment);
+
+    leftTarget = constrain(leftTarget, -MAX_SPEED, MAX_SPEED);
+    rightTarget = constrain(rightTarget, -MAX_SPEED, MAX_SPEED);
+
+    currentLeftSpeed = moveToward(currentLeftSpeed, leftTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
+    currentRightSpeed = moveToward(currentRightSpeed, rightTarget, MOTOR_RAMP_STEP_PER_SEC * dtSeconds);
+
+    setMotorSpeeds(currentLeftSpeed, currentRightSpeed);
+  }
+
+  telemetryData.version = TELEMETRY_VERSION;
+  telemetryData.packetLength = sizeof(TelemetryPacket);
   telemetryData.position = position;
-  telemetryData.error = error;
-  telemetryData.leftMotorSpeed = leftSpeed;
-  telemetryData.rightMotorSpeed = rightSpeed;
+  telemetryData.error = static_cast<int16_t>(error);
+  telemetryData.leftMotorSpeed = static_cast<int16_t>(currentLeftSpeed);
+  telemetryData.rightMotorSpeed = static_cast<int16_t>(currentRightSpeed);
   telemetryData.timestamp = currentMillis - runStartTime;
 
   for (int i = 0; i < SENSOR_COUNT; i++) {
@@ -134,6 +167,16 @@ void loop() {
   }
 
   sendTelemetry();
+}
+
+int moveToward(int currentValue, int targetValue, float maxDelta) {
+  if (currentValue < targetValue) {
+    return min(currentValue + static_cast<int>(maxDelta), targetValue);
+  }
+  if (currentValue > targetValue) {
+    return max(currentValue - static_cast<int>(maxDelta), targetValue);
+  }
+  return targetValue;
 }
 
 void initMotors() {
@@ -150,30 +193,35 @@ void initMotors() {
 }
 
 void setMotorSpeeds(int leftSpeed, int rightSpeed) {
+  int leftOutput = leftSpeed;
+  int rightOutput = rightSpeed;
+
   // Motor A (Left)
-  if (leftSpeed >= 0) {
+  if (leftOutput >= 0) {
     digitalWrite(AIN1_PIN, HIGH);
     digitalWrite(AIN2_PIN, LOW);
   } else {
     digitalWrite(AIN1_PIN, LOW);
     digitalWrite(AIN2_PIN, HIGH);
-    leftSpeed = -leftSpeed;
+    leftOutput = -leftOutput;
   }
-  analogWrite(PWMA_PIN, leftSpeed);
+  analogWrite(PWMA_PIN, leftOutput);
 
   // Motor B (Right)
-  if (rightSpeed >= 0) {
+  if (rightOutput >= 0) {
     digitalWrite(BIN1_PIN, HIGH);
     digitalWrite(BIN2_PIN, LOW);
   } else {
     digitalWrite(BIN1_PIN, LOW);
     digitalWrite(BIN2_PIN, HIGH);
-    rightSpeed = -rightSpeed;
+    rightOutput = -rightOutput;
   }
-  analogWrite(PWMB_PIN, rightSpeed);
+  analogWrite(PWMB_PIN, rightOutput);
 }
 
 void stopRobot() {
+  currentLeftSpeed = 0;
+  currentRightSpeed = 0;
   digitalWrite(STBY_PIN, LOW);
   analogWrite(PWMA_PIN, 0);
   analogWrite(PWMB_PIN, 0);
@@ -195,5 +243,8 @@ void initESPNow() {
 }
 
 void sendTelemetry() {
-  esp_now_send(receiverAddress, (uint8_t *)&telemetryData, sizeof(telemetryData));
+  esp_err_t result = esp_now_send(receiverAddress, reinterpret_cast<uint8_t *>(&telemetryData), sizeof(telemetryData));
+  if (result != ESP_OK) {
+    // The robot continues running even if a packet is dropped; the receiver can tolerate this.
+  }
 }

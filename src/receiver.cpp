@@ -2,19 +2,9 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-// Must match the exact structure defined on the robot
-#define SENSOR_COUNT 6
+#include "telemetry.h"
 
-typedef struct struct_telemetry {
-  uint16_t sensors[SENSOR_COUNT];
-  uint16_t position;
-  int16_t error;
-  int16_t leftMotorSpeed;
-  int16_t rightMotorSpeed;
-  uint32_t timestamp;
-} struct_telemetry;
-
-struct_telemetry incomingData;
+TelemetryPacket incomingData;
 
 // Callback function executed when ESP-NOW data is received
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
@@ -22,7 +12,21 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingDataByte
 #else
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingDataBytes, int len) {
 #endif
+  if (len < static_cast<int>(sizeof(TelemetryPacket))) {
+    Serial.printf("Discarded malformed packet: len=%d expected=%u\n", len, sizeof(TelemetryPacket));
+    return;
+  }
+
   memcpy(&incomingData, incomingDataBytes, sizeof(incomingData));
+
+  if (incomingData.version != TELEMETRY_VERSION || incomingData.packetLength != sizeof(TelemetryPacket)) {
+    Serial.printf("Discarded mismatched telemetry packet: version=%u length=%u expectedVersion=%u expectedLength=%u\n",
+                  incomingData.version,
+                  incomingData.packetLength,
+                  TELEMETRY_VERSION,
+                  sizeof(TelemetryPacket));
+    return;
+  }
 
   // --- TELEPLOT SERIAL OUTPUT ---
   // Teleplot requires each variable message to be formatted as: >variable_name:value\n
