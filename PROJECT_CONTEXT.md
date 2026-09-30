@@ -1,4 +1,4 @@
-# Robo Seguidor de Linha: Project Context
+# Line Follower Robot: Project Context
 
 ## 1. Project Overview
 
