@@ -20,9 +20,9 @@ uint16_t sensorValues[SENSOR_COUNT];
 #define AIN1_PIN 22
 #define AIN2_PIN 21
 
-#define PWMB_PIN 18
-#define BIN1_PIN 17
-#define BIN2_PIN 16
+#define PWMB_PIN 16
+#define BIN1_PIN 18
+#define BIN2_PIN 17
 
 #define STBY_PIN 5
 
@@ -203,8 +203,8 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
     digitalWrite(AIN2_PIN, LOW);
   } else {
     digitalWrite(AIN1_PIN, LOW);
-    digitalWrite(AIN2_PIN, HIGH);
-    leftOutput = -leftOutput;
+    digitalWrite(AIN2_PIN, LOW);
+    leftSpeed = 0;
   }
   analogWrite(PWMA_PIN, leftOutput);
 
@@ -214,8 +214,8 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
     digitalWrite(BIN2_PIN, LOW);
   } else {
     digitalWrite(BIN1_PIN, LOW);
-    digitalWrite(BIN2_PIN, HIGH);
-    rightOutput = -rightOutput;
+    digitalWrite(BIN2_PIN, LOW);
+    rightSpeed = 0;
   }
   analogWrite(PWMB_PIN, rightOutput);
 }
